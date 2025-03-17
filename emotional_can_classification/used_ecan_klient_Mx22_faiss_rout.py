@@ -1,40 +1,40 @@
-
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-import transformers
+import torch # Import the PyTorch library for tensor computations and GPU support
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig # Import necessary modules from the Hugging Face Transformers library
+import transformers # Import the Transformers library
 # BitsAndBytesConfig
-import pandas as pd
-import os
+import pandas as pd # Import the Pandas library for data manipulation and analysis
+import os # Import the OS library for interacting with the operating system
 
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+import argparse, shutil, logging # Import libraries for argument parsing, file operations, and logging
+parser = argparse.ArgumentParser() # Create an argument parser object
+parser.add_argument('--source', type=str,) # Add an argument for the source file path
+parser.add_argument('--target1', type=str,) # Add an argument for the target file path 1
+parser.add_argument('--target2', type=str,) # Add an argument for the target file path 2
+parser.add_argument('--iter', type=str,) # Add an argument for the iteration string
 
-import argparse, shutil, logging
-parser = argparse.ArgumentParser()
-parser.add_argument('--source', type=str,)
-parser.add_argument('--target1', type=str,)
-parser.add_argument('--target2', type=str,)
-parser.add_argument('--iter', type=str,)
-
-args = parser.parse_args()
-source = args.source 
-target1 = args.target1
-target2 = args.target2
-iter = args.iter
+args = parser.parse_args() # Parse the command line arguments
+source = args.source # Assign the source file path from the arguments
+target1 = args.target1 # Assign the target file path 1 from the arguments
+target2 = args.target2 # Assign the target file path 2 from the arguments
+iter = args.iter # Assign the iteration string from the arguments
 
 # print(source)
 # print(target1)
 # print(target2)
-import sys
+import sys # Import the sys library
 
-sample_df = pd.read_pickle(source)
+sample_df = pd.read_pickle(source) # Read a pickled Pandas DataFrame from the source file
 # sample_df = sample_df.sample(10).reset_index(drop=True).copy()
 
+from FlagEmbedding import FlagReranker # Import the FlagReranker class from the FlagEmbedding library
+reranker = FlagReranker('BAAI/bge-reranker-large', use_fp16=False) # Setting use_fp16 to True speeds up computation with a slight performance degradation
 
 
 # print(sample_df.columns)
 import pandas as pd
 from transformers import AutoTokenizer
-model_name = "unsloth/Qwen2-72B-Instruct-bnb-4bit"
+model_name = "mistralai/Mixtral-8x22B-Instruct-v0.1"
+# "mistralai/Mixtral-8x7B-Instruct-v0.1"
 
 
 
@@ -81,26 +81,6 @@ if compute_dtype == torch.float16 and use_4bit:
        print("Your GPU supports bfloat16: accelerate training with bf16=True")
        print("=" * 80)
        
-model_kwargs = {'device': 'cuda:0'}
-encode_kwargs = {'normalize_embeddings': False}
-# hf = HuggingFaceEmbeddings(
-#     model_name=model_name,
-#     model_kwargs=model_kwargs,
-#     encode_kwargs=encode_kwargs
-# )
-
-# embedmodel = AutoModelForCausalLM.from_pretrained(
-#    embedmodel_name,
-# #    quantization_config=bnb_config,
-# #    attn_implementation="flash_attention_2",
-#     # device="cuda:1",
-# )
-embedmodel_name='Alibaba-NLP/gte-Qwen2-1.5B-instruct'
-from langchain.embeddings.huggingface import HuggingFaceEmbeddings
-embedhf= HuggingFaceEmbeddings(model_name=embedmodel_name,
-                                #    model_kwargs=model_kwargs,
-    encode_kwargs=encode_kwargs
-    )
 
 #################################################################
 # Load pre-trained config
@@ -142,7 +122,7 @@ text_generation_pipeline = transformers.pipeline(
    task="text-generation",
    temperature=0.1,
    repetition_penalty=1.1,
-   max_new_tokens=256,
+   max_new_tokens=512,
    do_sample=True,
    top_k=50, top_p=0.90, 
    pad_token_id=tokenizer.eos_token_id, 
@@ -151,7 +131,7 @@ text_generation_pipeline = transformers.pipeline(
 
 prompt_template = """
 <s> [INST] 
-Anweisung: Interpretiere nicht, spekuliere nicht, was sein könnte, sondern du musst die Frage anhand des vorgegebenen Kontexts beantworten.
+Anweisung: Interpretiere nicht, spekuliere nicht, was sein könnte, sondern beantworte die Frage anhand des vorgegebenen Kontexts.
 ## KONTEXT:
 {context}
 
@@ -175,27 +155,34 @@ llm_chain = LLMChain(llm=mixtral_llm, prompt=prompt)
 
 from langchain_core.runnables import RunnablePassthrough
 query = """
+## DEFINITION:
+Emotionale, psychische Misshandlung der Kinder durch Eltern oder deren Partnern:
+Hartnäckiges Muster oder wiederholtes Verhalten der Eltern, das Schaden verursacht beim Kind, wie:
+verschmähen, verspotten, feindselig zurückweisen, verhöhnen, ausgrenzen, verunglimpfen, 
+Schmerzen zufügen, Fesseln, Einsperren, emotional Gefühle verletzen, Sachen zerstören des Kindes, Kind disziplinieren,
+Kind zum Sündenbock machen, Kind für die eigenen Bedürfnisse missbrauchen,
+Kind beschuldigen, Kind für die eigenen Fehler verantwortlich machen,
+ein negatives Selbstbild durch Beschimpfungen erzeugen, 
+erniedrigen, um extreme Enttäuschung und Missbilligung zu erzeugen, 
+Leistungen abwerten, 
+sich weigern, wechselnde soziale Rollen zu akzeptieren, 
+ein Kind demütigen, terrorisieren, einschüchtern, bedrohen (Verlassenwerden), 
+in der Öffentlichkeit lächerlich machen. 
+Isolieren: Verhindern, Ängste schüren, weil es soziale Interaktionen wünscht. 
+Ausbeutung, Verderben des Kindes, Verstärkung, Belohnung von Aggression, 
+Ermutigung des Kindes zu Fehlverhalten, Asozialität, Kriminalität, Hypersexualität, Zwang, sich um die Eltern zu kümmern. 
+Emotionales Desinteresse gegenüber einem Kind zeigen.
+                                
+## NICHT! TEIL DER DEFINITION SIND:  
+Auffälliges Verhalten des Kindes, negatives psychisches Verhalten des Kindes, 
+verbale oder physische Aggressionen des Kindes gegenüber den Eltern oder anderen Personen,
+Suizidgedanken oder Suizidversuche, Ritzen des Kindes usw.                                
+                                
 ## FRAGE:
-Eine schwierige finanzielle Situation von Eltern und Kindern kann als ein Zustand definiert werden, 
-in dem die Familie aufgrund unzureichender Einkommen oder unerwarteter Ausgaben Schwierigkeiten hat, 
-grundlegende Bedürfnisse wie Nahrung, Unterkunft, Gesundheitsversorgung und Bildung zu erfüllen, 
-aufgrund der Arbeitslosigkeit der Eltern, hoher Schulden, fehlender finanzieller Unterstützung, fehlenden Einkommens oder Hinweise auf Unterstützung durch die Sozialhilfe oder andere Institutionen. 
-Gibt es Hinweise für schwierige finanzielle Situation der Eltern oder des Kindes auch in der Vergangenheit 
-in diesen Textabschnitten? 
-
-A: Hinweise vorhanden für schwierige finanzielle Situation 
-B: Hinweise nicht vorhanden für schwierige finanzielle Situation  
-
-Falls A, liste klare, explizite Hinweise für schwierige finanzielle Situation der Eltern oder des Kindes.
+Gibt es gemäss der DEFINITION ausreichende eindeutige Hinweise, dass Eltern oder deren Partner die Kinder emotional, psychisch misshandeln? 
+Falls ja, liste diese Hinweise auf, anonsten gib an, dass keine Hinweise vorliegen.
+Interpretiere nicht, spekuliere nicht, was sein könnte, sondern beantworte die Frage anhand des vorgegebenen Kontexts.
 """
-
-definition= """
-Eine schwierige finanzielle Situation von Eltern und Kindern kann als ein Zustand definiert werden, 
-in dem die Familie aufgrund unzureichender Einkommen oder unerwarteter Ausgaben Schwierigkeiten hat, 
-grundlegende Bedürfnisse wie Nahrung, Unterkunft, Gesundheitsversorgung und Bildung zu erfüllen, aufgrund der Arbeitslosigkeit der Eltern, hoher Schulden, fehlender finanzieller Unterstützung, 
-fehlenden Einkommens oder Hinweise auf Unterstützung durch die Sozialhilfe oder andere Institutionen.  
-"""
-
 
 
 
@@ -278,32 +265,29 @@ def get_answer(text):
    #  chunked_documents = text_splitter.create_documents(docs_transformed)
     # print(chunked_documents)
 
-    db = FAISS.from_documents(chunked_documents, embedhf
-                            #   HuggingFaceEmbeddings(model_name='intfloat/multilingual-e5-large')
-        )
+    db = FAISS.from_documents(chunked_documents, HuggingFaceEmbeddings(model_name='intfloat/multilingual-e5-large'))
     retriever = db.as_retriever(
     search_type="similarity",
     search_kwargs={'k': 10, },    
     )
-    docs = retriever.get_relevant_documents(definition)
+    docs = retriever.get_relevant_documents(query)
     # pretty_print_docs(docs)
     list_chunks = [doc.page_content for doc in docs]
-    list_chunks2 = [] 
-    # scores = reranker.compute_score([[definition, chunk] for chunk in list_chunks])
-    # # print(scores)
-    # try:
-    #     list_chunks2 = [chunk for _, chunk in sorted(zip(scores, list_chunks), key=lambda x: x[0], reverse=True)]
-    # except TypeError:
-    #     list_chunks2 = []   
+    scores = reranker.compute_score([[query, chunk] for chunk in list_chunks])
+    # print(scores)
+    try:
+        list_chunks2 = [chunk for _, chunk in sorted(zip(scores, list_chunks), key=lambda x: x[0], reverse=True)]
+    except TypeError:
+        list_chunks2 = []   
     # print(list_chunks2)
-    # dict_chunks2 = [Document2(text) for text in list_chunks2]
+    dict_chunks2 = [Document2(text) for text in list_chunks2]
     # print(dict_chunks2)
     # sys.exit()
     try:
-        # db2=FAISS.from_documents(dict_chunks2, HuggingFaceEmbeddings(model_name='intfloat/multilingual-e5-large'))
-        # retriever2 = db2.as_retriever(search_kwargs={"k": 10})                    
+        db2=FAISS.from_documents(dict_chunks2, HuggingFaceEmbeddings(model_name='intfloat/multilingual-e5-large'))
+        retriever2 = db2.as_retriever(search_kwargs={"k": 10})                    
         rag_chain = (
-        {"context": retriever, "question": RunnablePassthrough()}
+        {"context": retriever2, "question": RunnablePassthrough()}
         | llm_chain
         )
     
@@ -377,9 +361,6 @@ if os.path.exists(file_path):
 
 
 
-
-
-
 # rbs_alk_eltern_sample_codiert.to_excel('rbs_ecan_klient_sample_antwort_recursFaissRerankBGE500-1000_antwort2.xlsx', index=False)
 
 import sys
@@ -395,7 +376,7 @@ from transformers import LlamaTokenizerFast, AutoTokenizer
 import os
 model_name ="deepset/gelectra-large"
 # Replace this with your own checkpoint
-tokenizer = AutoTokenizer.from_pretrained("finsit_class_qwen", do_lower_case = True,
+tokenizer = AutoTokenizer.from_pretrained("ecan_klient_class_gelectraMx22", do_lower_case = True,
                                          use_fast=True, max_length=512, truncation=True, padding=True,
                                          eos_token='###', pad_token='[PAD]',)
                                           
@@ -403,7 +384,7 @@ tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 # tokenizer.add_special_tokens({'eos_token': '###'})
 tokenizer.pad_token = tokenizer.eos_token
 
-model = AutoModelForSequenceClassification.from_pretrained("finsit_class_qwen").to("cuda")
+model = AutoModelForSequenceClassification.from_pretrained("ecan_klient_class_gelectraMx22").to("cuda")
 
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")

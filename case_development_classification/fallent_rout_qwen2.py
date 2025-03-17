@@ -1,64 +1,71 @@
-
+# Import necessary libraries
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 import transformers
-# BitsAndBytesConfig
+# BitsAndBytesConfig is used for model quantization
 import pandas as pd
 import os
 
+# Enable dynamic memory allocation for CUDA
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
+# Set up command line arguments
 import argparse, shutil, logging
 parser = argparse.ArgumentParser()
-parser.add_argument('--source', type=str,)
-parser.add_argument('--target1', type=str,)
-parser.add_argument('--target2', type=str,)
-parser.add_argument('--iter', type=str,)
+parser.add_argument('--source', type=str,)  # Source data file path
+parser.add_argument('--target1', type=str,)  # Target pickle file path
+parser.add_argument('--target2', type=str,)  # Target Excel file path
+parser.add_argument('--iter', type=str,)  # Iteration identifier for intermediate files
 
+# Parse command line arguments
 args = parser.parse_args()
 source = args.source 
 target1 = args.target1
 target2 = args.target2
 iter = args.iter
 
+# Debug prints
 # print(source)
 # print(target1)
 # print(target2)
 import sys
 
+# Load the dataset from the source file
 sample_df = pd.read_pickle(source)
+# Optional: Sample a subset of the data for testing
 # sample_df = sample_df.sample(20).reset_index(drop=True).copy()
 
-
-
-# print(sample_df.columns)
+# Import AutoTokenizer again (redundant)
 import pandas as pd
 from transformers import AutoTokenizer
+
+# Define LLM model to use
 # model_name = "mistralai/Mixtral-8x22B-Instruct-v0.1"
-model_name = "unsloth/Qwen2-72B-Instruct-bnb-4bit"
+model_name = "unsloth/Qwen2-72B-Instruct-bnb-4bit"  # Using Qwen2-72B model optimized with 4-bit quantization
 # model_name = "mistralai/Mixtral-8x7B-Instruct-v0.1"
 
-
-
+# Load model configuration
 model_config = transformers.AutoConfig.from_pretrained(
    model_name,
 )
 
+# Initialize tokenizer for the model
 tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-tokenizer.pad_token = tokenizer.eos_token
-tokenizer.padding_side = "right"
+tokenizer.pad_token = tokenizer.eos_token  # Set padding token to end-of-sequence token
+tokenizer.padding_side = "right"  # Pad on the right side
+
 #################################################################
-# bitsandbytes parameters
+# BitsAndBytes quantization parameters
 #################################################################
 
 # Activate 4-bit precision base model loading
 use_4bit = True
 
-# Compute dtype for 4-bit base models
+# Compute dtype for 4-bit base models (float16 for better performance)
 bnb_4bit_compute_dtype = "float16"
 
 # Quantization type (fp4 or nf4)
-bnb_4bit_quant_type = "nf4"
+bnb_4bit_quant_type = "nf4"  # Normal float 4-bit quantization
 
 # Activate nested quantization for 4-bit base models (double quantization)
 use_nested_quant = False
@@ -66,8 +73,10 @@ use_nested_quant = False
 #################################################################
 # Set up quantization config
 #################################################################
+# Convert string dtype to torch dtype
 compute_dtype = getattr(torch, bnb_4bit_compute_dtype)
 
+# Create BitsAndBytes configuration for model loading
 bnb_config = BitsAndBytesConfig(
    load_in_4bit=use_4bit,
    bnb_4bit_quant_type=bnb_4bit_quant_type,
@@ -83,56 +92,41 @@ if compute_dtype == torch.float16 and use_4bit:
        print("Your GPU supports bfloat16: accelerate training with bf16=True")
        print("=" * 80)
        
+# Embedding model configuration options (commented out)
 # model_kwargs = {'device': 'cuda:0'}
 # model_kwargs = { 'quantization_config': bnb_config, 'attn_implementation': 'flash_attention_2', 'device_map': 'auto' }
                 
+# Embedding settings
 encode_kwargs = {'normalize_embeddings': False}
-# hf = HuggingFaceEmbeddings(
-#     model_name=model_name,
-#     model_kwargs=model_kwargs,
-#     encode_kwargs=encode_kwargs
-# )
 
-# embedmodel = AutoModelForCausalLM.from_pretrained(
-#    embedmodel_name,
-# #    quantization_config=bnb_config,
-# #    attn_implementation="flash_attention_2",
-#     # device="cuda:1",
-# )
+# Define embedding model name
 # embedmodel_name='intfloat/multilingual-e5-large'
 embedmodel_name='Alibaba-NLP/gte-Qwen2-1.5B-instruct'
 
+# Import embedding related libraries
 from langchain.embeddings.huggingface import HuggingFaceEmbeddings
 from sentence_transformers import SentenceTransformer
-# embedhf = SentenceTransformer("Alibaba-NLP/gte-Qwen2-1.5B-instruct", trust_remote_code=True)
-
-embedhf= HuggingFaceEmbeddings(model_name=embedmodel_name,
-                                #    model_kwargs=model_kwargs,
-                                
+# Initialize embedding model
+embedhf= HuggingFaceEmbeddings(
+    model_name=embedmodel_name,
     encode_kwargs=encode_kwargs
-    )
+)
 
 #################################################################
-# Load pre-trained config
+# Load pre-trained LLM
 #################################################################
-
+# Load the large language model with optimizations
 model = AutoModelForCausalLM.from_pretrained(
    model_name,
    quantization_config=bnb_config,
-    # load_in_4bit = load_in_4bit,
-   attn_implementation="flash_attention_2",
-    device_map="auto",
+   attn_implementation="flash_attention_2",  # Use Flash Attention 2 for faster inference
+   device_map="auto",  # Automatically distribute model across available GPUs
 )
 
-
+# Import additional libraries for document processing and RAG
 import os
-
-
 import pandas as pd
-
 import random
-# sample_df = pd.read_pickle('traintest_dataset_rbs_psych.pkl')
-
 from langchain_community.document_transformers import Html2TextTransformer
 from langchain_community.document_loaders import AsyncChromiumLoader
 from langchain_community.vectorstores import FAISS
@@ -140,27 +134,27 @@ from langchain_community.llms import HuggingFacePipeline
 import nest_asyncio
 nest_asyncio.apply()
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-
-
 from langchain_community.llms import HuggingFacePipeline
 from langchain.prompts import PromptTemplate
 from langchain.embeddings.huggingface import HuggingFaceEmbeddings
 from langchain.chains import LLMChain
 from langchain_community.document_loaders import TextLoader
 
+# Create a text generation pipeline with the loaded model
 text_generation_pipeline = transformers.pipeline(
    model=model,
    tokenizer=tokenizer,
    task="text-generation",
-   temperature=0.1,
-   repetition_penalty=1.1,
-   max_new_tokens=512,
-   do_sample=True,
-   top_k=50, top_p=0.90, 
+   temperature=0.1,  # Low temperature for more deterministic outputs
+   repetition_penalty=1.1,  # Penalize repetition slightly
+   max_new_tokens=512,  # Maximum number of tokens to generate
+   do_sample=True,  # Use sampling
+   top_k=50, top_p=0.90,  # Top-k and nucleus sampling parameters
    pad_token_id=tokenizer.eos_token_id, 
-   return_full_text=False,
+   return_full_text=False,  # Only return the newly generated text
 )
 
+# Define the prompt template in German
 prompt_template = """
 <s> [INST] 
 Anweisung: 
@@ -175,6 +169,7 @@ Dann musst du klare, explizite Hinweise für die Einschätzung auflisten.
 {question} [/INST]
 """
 
+# Initialize the LLM with the pipeline
 mixtral_llm = HuggingFacePipeline(pipeline=text_generation_pipeline)
 
 # Create prompt from prompt template
@@ -183,13 +178,13 @@ prompt = PromptTemplate(
    template=prompt_template,
 )
 
-# Create llm chain
+# Create LLM chain
 llm_chain = LLMChain(llm=mixtral_llm, prompt=prompt)
 
-
-
-
+# Import RunnablePassthrough for RAG pipeline
 from langchain_core.runnables import RunnablePassthrough
+
+# Define the query to be asked for each document
 query = """
 ## FRAGE:
 Wie entwickelt sich Situation des Kindes bezüglich der im Text beschriebenen Ausgangslage, dem Auftrag, den Zielen der Beistandschaft, gemäss der Berichterstattung, der Beurteilung, der Prognose, den Schlussfolgerungen, den Anträgen in diesem Rechenschaftsbericht? 
@@ -200,26 +195,23 @@ C: sich verschlechternde Entwicklung
 
 """
 
+# Define the core question for document retrieval
 definition= """
 Wie entwickelt sich Situation des Kindes bezüglich der im Text beschriebenen Ausgangslage, dem Auftrag, den Zielen der Beistandschaft, gemäss der Berichterstattung, der Beurteilung, der Prognose, den Schlussfolgerungen, den Anträgen in diesem Rechenschaftsbericht? 
 """
 
-
-
-
+# Set logging level to ERROR to reduce output noise
 import logging
 logging.getLogger().setLevel(logging.ERROR)
 
-
-
+# Import garbage collection for memory management
 import gc
 
+# Import LlamaIndex utilities for document processing
 from llama_index.core.schema import ImageNode, MetadataMode, NodeWithScore
 from llama_index.core.utils import truncate_text
 
 # Helper function for printing docs
-
-
 def pretty_print_docs(docs):
     print(
         f"\n{'-' * 100}\n".join(
@@ -230,6 +222,7 @@ def pretty_print_docs(docs):
         )
     )
 
+# Function to display source nodes with metadata
 def display_source_node(
     source_node: NodeWithScore,
     source_length: int = 100,
@@ -252,18 +245,18 @@ def display_source_node(
 
     print(text_md)
 
+# Import reranker and other text splitting utilities
 from llama_index.postprocessor.flag_embedding_reranker import FlagEmbeddingReranker
 from llama_index.core.schema import QueryBundle
-
 import spacy
 from langchain.text_splitter import SpacyTextSplitter
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_openai.embeddings import OpenAIEmbeddings
-# text_splitter = SemanticChunker(HuggingFaceEmbeddings(model_name='sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'))
+
+# Initialize text splitter for document chunking
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-#  text_splitter = SpacyTextSplitter(pipeline="de_core_news_lg", chunk_size=100, chunk_overlap=5)
 
-
+# Custom Document class for handling text chunks
 class Document2:
     def __init__(self, page_content):
         self.page_content = page_content
@@ -272,78 +265,74 @@ class Document2:
     def __repr__(self):
         return f"Document(page_content='{self.page_content}', metadata={self.metadata})"
 
-
-
-
+# Main function to process text and get answer using RAG
 def get_answer(text):
+    # Save the text to a temporary file
     with open(iter+'rb.txt', 'w') as file:
         file.write(text)
 
+    # Load the text using TextLoader
     loader = TextLoader(iter+"rb.txt")
-    # loader = TextLoader(text)
     docs_transformed = loader.load()    
+    
+    # Split documents into chunks
     chunked_documents = text_splitter.split_documents(docs_transformed)
-   #  chunked_documents = text_splitter.create_documents(docs_transformed)
-    # print(chunked_documents)
-
-    db = FAISS.from_documents(chunked_documents, embedhf
-                            #   HuggingFaceEmbeddings(model_name='intfloat/multilingual-e5-large')
-        )
+   
+    # Create a FAISS vector store from the chunks
+    db = FAISS.from_documents(chunked_documents, embedhf)
+    
+    # Set up retriever for semantic search
     retriever = db.as_retriever(
-    search_type="similarity",
-    search_kwargs={'k': 10, },    
+        search_type="similarity",
+        search_kwargs={'k': 10, },    
     )
+    
+    # Retrieve relevant documents based on the query
     docs = retriever.get_relevant_documents(definition)
-    # pretty_print_docs(docs)
+    
+    # Extract content from retrieved documents
     list_chunks = [doc.page_content for doc in docs]
     list_chunks2 = [] 
-    # scores = reranker.compute_score([[definition, chunk] for chunk in list_chunks])
-    # # print(scores)
-    # try:
-    #     list_chunks2 = [chunk for _, chunk in sorted(zip(scores, list_chunks), key=lambda x: x[0], reverse=True)]
-    # except TypeError:
-    #     list_chunks2 = []   
-    # print(list_chunks2)
-    # dict_chunks2 = [Document2(text) for text in list_chunks2]
-    # print(dict_chunks2)
-    # sys.exit()
+    
+    # Set up and run the RAG chain
     try:
-        # db2=FAISS.from_documents(dict_chunks2, HuggingFaceEmbeddings(model_name='intfloat/multilingual-e5-large'))
-        # retriever2 = db2.as_retriever(search_kwargs={"k": 10})                    
         rag_chain = (
-        {"context": retriever, "question": RunnablePassthrough()}
-        | llm_chain
+            {"context": retriever, "question": RunnablePassthrough()}
+            | llm_chain
         )
     
-        result= rag_chain.invoke(query)
-        # print(result['text'])
+        # Get result from the RAG chain
+        result = rag_chain.invoke(query)
+        
+        # Clean up memory
         torch.cuda.empty_cache()
         gc.collect()    
+        
         return result['text'], result['context'], list_chunks, list_chunks2
     except IndexError:
         return "Error", list_chunks, list_chunks, list_chunks2
 
-
+# Function to extract context from document output
 def extract_context(text):    
     try:
         extracted_texts = [doc.split("page_content='")[1].split("',")[0] for doc in text.split("Document(")[1:]]
-        # Print the extracted texts (you can save them or process further as needed)
-        # print(extracted_texts)
         extracted_context = '\n'.join(extracted_texts)
         extracted_context = '\nChunk: '.join(line for line in extracted_context.splitlines() if line.strip())
-      #   print(extracted_context)
         return extracted_context
     except IndexError:
-        # print("IndexError: list index out of range")
         return None
     
+# Set logging level to ERROR to reduce output noise
 import logging
 logging.getLogger().setLevel(logging.ERROR)
 
+# Initialize containers for results
 context = {}
 answer = []
 list_chunks1 = []
 list_chunks2 = []
+
+# Process each document in the dataset
 for index, row in sample_df.iterrows():
     text = row['text']
     antwort, kontext, list1, list2 = get_answer(text)
@@ -352,103 +341,82 @@ for index, row in sample_df.iterrows():
     list_chunks1.append(list1)
     list_chunks2.append(list2)
     
-
+# Add results to the dataframe
 sample_df['antwort'] = answer
 sample_df['context'] = context
 sample_df['list_chunks1'] = list_chunks1
 sample_df['list_chunks2'] = list_chunks2
 
-
-# sample_df.to_pickle('sample_dfTemp2.pkl')
-# sample_df.to_excel('sample_dfTemp2.xlsx')
-# sample_df0= pd.read_excel('sample_dfTemp2.xlsx', sheet_name='Sheet1')
-# sample_df0['extracted_context'] = sample_df0['context'].apply(lambda x: extract_context(x))
-# sample_df0.to_excel('sample_dfTemp2.xlsx')
-# sample_df=sample_df0.copy()
-
-
-
-
+# Save intermediate results to Excel
 sample_df.to_excel(iter+'sample_dfTemp2.xlsx')
-sample_df0= pd.read_excel(iter+'sample_dfTemp2.xlsx', sheet_name='Sheet1')
+sample_df0 = pd.read_excel(iter+'sample_dfTemp2.xlsx', sheet_name='Sheet1')
+
+# Extract and process context
 sample_df0['extracted_context'] = sample_df0['context'].apply(lambda x: extract_context(x))
-# sample_df0.to_excel(iter+'sample_dfTemp2.xlsx')
-sample_df=sample_df0.copy()
+sample_df = sample_df0.copy()
 
-# sample_df.to_excel('rbs_ecan_klient_sample_antwort_llamaIndexRerank1-1000.xlsx')
+# Create a copy for classification
+rbs_alk_eltern_sample = sample_df.copy()
 
-rbs_alk_eltern_sample=sample_df.copy()
-
+# Clean up temporary files
 file_path = iter+'sample_dfTemp2.xlsx'
 if os.path.exists(file_path):
   os.remove(file_path)
 
-
-
-
-
-
-# rbs_alk_eltern_sample_codiert.to_excel('rbs_ecan_klient_sample_antwort_recursFaissRerankBGE500-1000_antwort2.xlsx', index=False)
-
-import sys
-# sys.exit()
-
-# dataset = Dataset.from_pandas(rbs_alk_eltern_sample10)
-
+# Import libraries for classification
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import pandas as pd
 from transformers import AutoTokenizer
 from transformers import AutoTokenizer
 from transformers import LlamaTokenizerFast, AutoTokenizer
 import os
-model_name ="deepset/gelectra-large"
-# Replace this with your own checkpoint
-tokenizer = AutoTokenizer.from_pretrained("fallentwicklung_class_qwen2", do_lower_case = True,
+
+# Define classification model
+model_name = "deepset/gelectra-large"
+
+# Load pre-trained tokenizer for classification
+tokenizer = AutoTokenizer.from_pretrained("fallentwicklung_class_qwen2", do_lower_case=True,
                                          use_fast=True, max_length=512, truncation=True, padding=True,
                                          eos_token='###', pad_token='[PAD]',)
                                           
+# Add special tokens to tokenizer
 tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-# tokenizer.add_special_tokens({'eos_token': '###'})
 tokenizer.pad_token = tokenizer.eos_token
 
+# Load pre-trained classification model
 model = AutoModelForSequenceClassification.from_pretrained("fallentwicklung_class_qwen2").to("cuda")
 
-
+# Set device for inference
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-# print(device)
 
-
+# Initialize label column
 rbs_alk_eltern_sample['label'] = None
-
 rbs_alk_eltern_sample.reset_index(inplace=True)
 
+# Run classification on each document
 model.eval()
 for i in range(len(rbs_alk_eltern_sample)): 
-         
-        text=str(rbs_alk_eltern_sample.loc[i, "antwort"])
-        # print(text)
-        # inputs = tokenizer(text, return_tensors="pt")
-        inputs = tokenizer(text, return_tensors="pt", max_length=512, truncation=True, padding="max_length")
-        inputs=inputs.to(device)
-        # print(inputs)
-        with torch.no_grad():
-            logits = model(**inputs)
-        predicted_class_id = torch.argmax(logits[0]).item()
-        # print(predicted_class_id)
-        rbs_alk_eltern_sample.loc[i, "label"]=predicted_class_id
-        
-        
+    # Get text from answer column    
+    text = str(rbs_alk_eltern_sample.loc[i, "antwort"])
+    
+    # Tokenize and prepare for model
+    inputs = tokenizer(text, return_tensors="pt", max_length=512, truncation=True, padding="max_length")
+    inputs = inputs.to(device)
+    
+    # Get prediction
+    with torch.no_grad():
+        logits = model(**inputs)
+    predicted_class_id = torch.argmax(logits[0]).item()
+    
+    # Save prediction to dataframe
+    rbs_alk_eltern_sample.loc[i, "label"] = predicted_class_id
 
+# Set display options
 pd.options.display.max_colwidth = 1000
-# print(rbs_alk_eltern_sample[["antwort", "label"]])
 
-rbs_alk_eltern_sample_codiert=rbs_alk_eltern_sample.copy()
+# Create a copy for final output
+rbs_alk_eltern_sample_codiert = rbs_alk_eltern_sample.copy()
 
-
-# Save DataFrame as pkl file
-# rbs_alk_eltern_sample_codiert.to_pickle('rbs/rbs0-4000_psych_codiert.pkl')
+# Save results to pickle and Excel files
 rbs_alk_eltern_sample_codiert.to_pickle(target1)
-
-# Save DataFrame as Excel file
-# rbs_alk_eltern_sample_codiert.to_excel('rbs/rbs0-4000_psych_codiert.xlsx', index=False)
 rbs_alk_eltern_sample_codiert.to_excel(target2, index=False)

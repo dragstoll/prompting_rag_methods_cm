@@ -1,75 +1,64 @@
-
+# Import necessary libraries
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 import transformers
-# BitsAndBytesConfig
 import pandas as pd
 import os
 
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-os.environ["PYTORCH_USE_CUDA_DSA"] = "1"           
+# Set environment variable for PyTorch CUDA allocation
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
+# Import additional libraries for argument parsing, file operations, and logging
 import argparse, shutil, logging
+
+# Set up argument parser to accept source, target1, target2, and iter arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('--source', type=str,)
 parser.add_argument('--target1', type=str,)
 parser.add_argument('--target2', type=str,)
 parser.add_argument('--iter', type=str,)
 
+# Parse the arguments
 args = parser.parse_args()
 source = args.source 
 target1 = args.target1
 target2 = args.target2
 iter = args.iter
 
-# print(source)
-# print(target1)
-# print(target2)
-import sys
-
+# Load the source data from a pickle file
 sample_df = pd.read_pickle(source)
-# sample_df = sample_df.sample(10).reset_index(drop=True).copy()
 
-
-
-# print(sample_df.columns)
+# Import necessary libraries again (redundant, can be removed)
 import pandas as pd
 from transformers import AutoTokenizer
 
-model_name = "unsloth/Mistral-Large-Instruct-2407-bnb-4bit"
+# Define the model name
+model_name = "unsloth/Qwen2-72B-Instruct-bnb-4bit"
 
+# Load model configuration
+model_config = transformers.AutoConfig.from_pretrained(model_name)
 
-
-
-model_config = transformers.AutoConfig.from_pretrained(
-   model_name,
-)
-
-tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-Large-Instruct-2407", trust_remote_code=True)
+# Load tokenizer and set padding token
+tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 tokenizer.pad_token = tokenizer.eos_token
 tokenizer.padding_side = "right"
+
 #################################################################
 # bitsandbytes parameters
 #################################################################
 
-# Activate 4-bit precision base model loading
+# Set up bitsandbytes parameters for 4-bit precision
 use_4bit = True
-
-# Compute dtype for 4-bit base models
 bnb_4bit_compute_dtype = "float16"
-
-# Quantization type (fp4 or nf4)
 bnb_4bit_quant_type = "nf4"
-
-# Activate nested quantization for 4-bit base models (double quantization)
 use_nested_quant = False
 
 #################################################################
 # Set up quantization config
 #################################################################
-compute_dtype = getattr(torch, bnb_4bit_compute_dtype)
 
+# Set up quantization config
+compute_dtype = getattr(torch, bnb_4bit_compute_dtype)
 bnb_config = BitsAndBytesConfig(
    load_in_4bit=use_4bit,
    bnb_4bit_quant_type=bnb_4bit_quant_type,
@@ -84,48 +73,32 @@ if compute_dtype == torch.float16 and use_4bit:
        print("=" * 80)
        print("Your GPU supports bfloat16: accelerate training with bf16=True")
        print("=" * 80)
-       
+
+# Define model and encoding kwargs
 model_kwargs = {'device': 'cuda:0'}
 encode_kwargs = {'normalize_embeddings': False}
-# hf = HuggingFaceEmbeddings(
-#     model_name=model_name,
-#     model_kwargs=model_kwargs,
-#     encode_kwargs=encode_kwargs
-# )
 
-# embedmodel = AutoModelForCausalLM.from_pretrained(
-#    embedmodel_name,
-# #    quantization_config=bnb_config,
-# #    attn_implementation="flash_attention_2",
-#     # device="cuda:1",
-# )
-embedmodel_name='intfloat/multilingual-e5-large'
-# embedmodel_name='Alibaba-NLP/gte-Qwen2-1.5B-instruct'
+# Load embedding model
+embedmodel_name='Alibaba-NLP/gte-Qwen2-1.5B-instruct'
 from langchain.embeddings.huggingface import HuggingFaceEmbeddings
-embedhf= HuggingFaceEmbeddings(model_name=embedmodel_name,
-                                #    model_kwargs=model_kwargs,
-    encode_kwargs=encode_kwargs
-    )
+embedhf= HuggingFaceEmbeddings(model_name=embedmodel_name, encode_kwargs=encode_kwargs)
 
 #################################################################
 # Load pre-trained config
 #################################################################
+
+# Load pre-trained model with quantization config
 model = AutoModelForCausalLM.from_pretrained(
    model_name,
    quantization_config=bnb_config,
    attn_implementation="flash_attention_2",
-    device_map="auto",
+   device_map="auto",
 )
 
-
+# Import additional libraries for document processing and text splitting
 import os
-
-
 import pandas as pd
-
 import random
-# sample_df = pd.read_pickle('traintest_dataset_rbs_psych.pkl')
-
 from langchain_community.document_transformers import Html2TextTransformer
 from langchain_community.document_loaders import AsyncChromiumLoader
 from langchain_community.vectorstores import FAISS
@@ -133,88 +106,72 @@ from langchain_community.llms import HuggingFacePipeline
 import nest_asyncio
 nest_asyncio.apply()
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-
-
-from langchain_community.llms import HuggingFacePipeline
 from langchain.prompts import PromptTemplate
-from langchain.embeddings.huggingface import HuggingFaceEmbeddings
 from langchain.chains import LLMChain
 from langchain_community.document_loaders import TextLoader
 
+# Set up text generation pipeline
 text_generation_pipeline = transformers.pipeline(
    model=model,
    tokenizer=tokenizer,
    task="text-generation",
    temperature=0.1,
    repetition_penalty=1.1,
-   max_new_tokens=512,
+   max_new_tokens=256,
    do_sample=True,
    top_k=50, top_p=0.90, 
    pad_token_id=tokenizer.eos_token_id, 
    return_full_text=False,
 )
 
+# Define prompt template
 prompt_template = """
 <s> [INST] 
-Anweisung: Interpretiere nicht, spekuliere nicht, sondern du musst die Frage nur anhand des vorgegebenen Kontexts beantworten.
-
+Anweisung: Interpretiere nicht, spekuliere nicht, was sein könnte, sondern du musst die Frage anhand des vorgegebenen Kontexts beantworten.
 ## KONTEXT:
 {context}
-
 
 {question} [/INST]
 """
 
+# Create HuggingFacePipeline and LLMChain
 mixtral_llm = HuggingFacePipeline(pipeline=text_generation_pipeline)
-
-# Create prompt from prompt template
-prompt = PromptTemplate(
-   input_variables=["context", "question"],
-   template=prompt_template,
-)
-
-# Create llm chain
+prompt = PromptTemplate(input_variables=["context", "question"], template=prompt_template)
 llm_chain = LLMChain(llm=mixtral_llm, prompt=prompt)
 
-
-
-
-from langchain_core.runnables import RunnablePassthrough
+# Define query and definition for financial situation
 query = """
 ## FRAGE:
-Psychischen oder psychiatrischen Probleme bei Eltern sind: 
-psychische Störungen, Erkrankungen, Persönlichkeitsstörungen, psychologische oder psychiatrische Therapie/Betreuung/Behandlungen, welche besucht, verweigert wird oder empfohlen werden, 
-Einweisung in eine psychiatrische Klinik, wenn psychische, psychiatrische Diagnosen diagnostiziert sind wie: Depressionen, Angststörungen, Wahn, Bipolar, Borderline Persönlichkeitsstörungen.
+Eine schwierige finanzielle Situation von Eltern und Kindern kann als ein Zustand definiert werden, 
+in dem die Familie aufgrund unzureichender Einkommen oder unerwarteter Ausgaben Schwierigkeiten hat, 
+grundlegende Bedürfnisse wie Nahrung, Unterkunft, Gesundheitsversorgung und Bildung zu erfüllen, 
+aufgrund der Arbeitslosigkeit der Eltern, hoher Schulden, fehlender finanzieller Unterstützung, fehlenden Einkommens oder Hinweise auf Unterstützung durch die Sozialhilfe oder andere Institutionen. 
+Gibt es Hinweise für schwierige finanzielle Situation der Eltern oder des Kindes auch in der Vergangenheit 
+in diesen Textabschnitten? 
 
-Gibt es klare, explizite Hinweise für psychische oder psychiatrische Probleme bei Eltern?
-A: Klare, explizite Hinweise vorhanden für psychische oder psychiatrische Probleme bei Eltern
-B: Klare, explizite Hinweise nicht vorhanden für psychische oder psychiatrische Probleme bei Eltern
+A: Hinweise vorhanden für schwierige finanzielle Situation 
+B: Hinweise nicht vorhanden für schwierige finanzielle Situation  
 
-Falls klare, explizite Hinweise vorhanden, liste Hinweise für psychische oder psychiatrische Probleme bei Eltern auf, falls Hinweise nicht vorhanden beantworte nur die Frage.
+Falls A, liste klare, explizite Hinweise für schwierige finanzielle Situation der Eltern oder des Kindes.
 """
 
 definition= """
-Psychischen oder psychiatrischen Probleme bei Eltern sind: 
-psychische Störungen, Erkrankungen, Persönlichkeitsstörungen, psychologische oder psychiatrische Therapie/Betreuung/Behandlungen, welche besucht, verweigert wird oder empfohlen werden, 
-Einweisung in eine psychiatrische Klinik, wenn psychische, psychiatrische Diagnosen diagnostiziert sind wie: Depressionen, Angststörungen, Wahn, Bipolar, Borderline Persönlichkeitsstörungen.
+Eine schwierige finanzielle Situation von Eltern und Kindern kann als ein Zustand definiert werden, 
+in dem die Familie aufgrund unzureichender Einkommen oder unerwarteter Ausgaben Schwierigkeiten hat, 
+grundlegende Bedürfnisse wie Nahrung, Unterkunft, Gesundheitsversorgung und Bildung zu erfüllen, aufgrund der Arbeitslosigkeit der Eltern, hoher Schulden, fehlender finanzieller Unterstützung, 
+fehlenden Einkommens oder Hinweise auf Unterstützung durch die Sozialhilfe oder andere Institutionen.  
 """
 
-
-
-
+# Set logging level to ERROR
 import logging
 logging.getLogger().setLevel(logging.ERROR)
 
-
-
+# Import additional libraries for garbage collection and document processing
 import gc
-
 from llama_index.core.schema import ImageNode, MetadataMode, NodeWithScore
 from llama_index.core.utils import truncate_text
 
-# Helper function for printing docs
-
-
+# Define helper functions for printing documents and displaying source nodes
 def pretty_print_docs(docs):
     print(
         f"\n{'-' * 100}\n".join(
@@ -247,18 +204,18 @@ def display_source_node(
 
     print(text_md)
 
+# Import additional libraries for text splitting and embeddings
 from llama_index.postprocessor.flag_embedding_reranker import FlagEmbeddingReranker
 from llama_index.core.schema import QueryBundle
-
 import spacy
 from langchain.text_splitter import SpacyTextSplitter
 from langchain_experimental.text_splitter import SemanticChunker
 from langchain_openai.embeddings import OpenAIEmbeddings
-# text_splitter = SemanticChunker(HuggingFaceEmbeddings(model_name='sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'))
+
+# Define text splitter
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-#  text_splitter = SpacyTextSplitter(pipeline="de_core_news_lg", chunk_size=100, chunk_overlap=5)
 
-
+# Define Document2 class
 class Document2:
     def __init__(self, page_content):
         self.page_content = page_content
@@ -267,78 +224,52 @@ class Document2:
     def __repr__(self):
         return f"Document(page_content='{self.page_content}', metadata={self.metadata})"
 
-
-
-
+# Define function to get answer from text
 def get_answer(text):
     with open(iter+'rb.txt', 'w') as file:
         file.write(text)
 
     loader = TextLoader(iter+"rb.txt")
-    # loader = TextLoader(text)
     docs_transformed = loader.load()    
     chunked_documents = text_splitter.split_documents(docs_transformed)
-   #  chunked_documents = text_splitter.create_documents(docs_transformed)
-    # print(chunked_documents)
-
-    db = FAISS.from_documents(chunked_documents, embedhf
-                            #   HuggingFaceEmbeddings(model_name='intfloat/multilingual-e5-large')
-        )
-    retriever = db.as_retriever(
-    search_type="similarity",
-    search_kwargs={'k': 10, },    
-    )
+    db = FAISS.from_documents(chunked_documents, embedhf)
+    retriever = db.as_retriever(search_type="similarity", search_kwargs={'k': 10})
     docs = retriever.get_relevant_documents(definition)
-    # pretty_print_docs(docs)
     list_chunks = [doc.page_content for doc in docs]
     list_chunks2 = [] 
-    # scores = reranker.compute_score([[definition, chunk] for chunk in list_chunks])
-    # # print(scores)
-    # try:
-    #     list_chunks2 = [chunk for _, chunk in sorted(zip(scores, list_chunks), key=lambda x: x[0], reverse=True)]
-    # except TypeError:
-    #     list_chunks2 = []   
-    # print(list_chunks2)
-    # dict_chunks2 = [Document2(text) for text in list_chunks2]
-    # print(dict_chunks2)
-    # sys.exit()
     try:
-        # db2=FAISS.from_documents(dict_chunks2, HuggingFaceEmbeddings(model_name='intfloat/multilingual-e5-large'))
-        # retriever2 = db2.as_retriever(search_kwargs={"k": 10})                    
         rag_chain = (
         {"context": retriever, "question": RunnablePassthrough()}
         | llm_chain
         )
-    
         result= rag_chain.invoke(query)
-        # print(result['text'])
         torch.cuda.empty_cache()
         gc.collect()    
         return result['text'], result['context'], list_chunks, list_chunks2
     except IndexError:
         return "Error", list_chunks, list_chunks, list_chunks2
 
-
+# Define function to extract context from text
 def extract_context(text):    
     try:
         extracted_texts = [doc.split("page_content='")[1].split("',")[0] for doc in text.split("Document(")[1:]]
-        # Print the extracted texts (you can save them or process further as needed)
-        # print(extracted_texts)
         extracted_context = '\n'.join(extracted_texts)
         extracted_context = '\nChunk: '.join(line for line in extracted_context.splitlines() if line.strip())
-      #   print(extracted_context)
         return extracted_context
     except IndexError:
-        # print("IndexError: list index out of range")
         return None
-    
+
+# Set logging level to ERROR
 import logging
 logging.getLogger().setLevel(logging.ERROR)
 
+# Initialize variables for context, answer, and chunks
 context = {}
 answer = []
 list_chunks1 = []
 list_chunks2 = []
+
+# Iterate through sample_df and get answers for each row
 for index, row in sample_df.iterrows():
     text = row['text']
     antwort, kontext, list1, list2 = get_answer(text)
@@ -346,104 +277,59 @@ for index, row in sample_df.iterrows():
     context[index] = kontext
     list_chunks1.append(list1)
     list_chunks2.append(list2)
-    
 
+# Add answers and context to sample_df
 sample_df['antwort'] = answer
 sample_df['context'] = context
 sample_df['list_chunks1'] = list_chunks1
 sample_df['list_chunks2'] = list_chunks2
 
-
-# sample_df.to_pickle('sample_dfTemp2.pkl')
-# sample_df.to_excel('sample_dfTemp2.xlsx')
-# sample_df0= pd.read_excel('sample_dfTemp2.xlsx', sheet_name='Sheet1')
-# sample_df0['extracted_context'] = sample_df0['context'].apply(lambda x: extract_context(x))
-# sample_df0.to_excel('sample_dfTemp2.xlsx')
-# sample_df=sample_df0.copy()
-
-
-
-
+# Save sample_df to Excel file
 sample_df.to_excel(iter+'sample_dfTemp2.xlsx')
 sample_df0= pd.read_excel(iter+'sample_dfTemp2.xlsx', sheet_name='Sheet1')
 sample_df0['extracted_context'] = sample_df0['context'].apply(lambda x: extract_context(x))
-# sample_df0.to_excel(iter+'sample_dfTemp2.xlsx')
 sample_df=sample_df0.copy()
 
-# sample_df.to_excel('rbs_ecan_klient_sample_antwort_llamaIndexRerank1-1000.xlsx')
-
+# Save final DataFrame to Excel and pickle files
 rbs_alk_eltern_sample=sample_df.copy()
-
 file_path = iter+'sample_dfTemp2.xlsx'
 if os.path.exists(file_path):
   os.remove(file_path)
 
-
-
-
-
-
-# rbs_alk_eltern_sample_codiert.to_excel('rbs_ecan_klient_sample_antwort_recursFaissRerankBGE500-1000_antwort2.xlsx', index=False)
-
+# Import additional libraries for model loading and tokenization
 import sys
-# sys.exit()
-
-# dataset = Dataset.from_pandas(rbs_alk_eltern_sample10)
-
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
-import pandas as pd
-from transformers import AutoTokenizer
-from transformers import AutoTokenizer
-from transformers import LlamaTokenizerFast, AutoTokenizer
-import os
+
+# Define model name and load tokenizer
 model_name ="deepset/gelectra-large"
-# Replace this with your own checkpoint
-tokenizer = AutoTokenizer.from_pretrained("psych_eltern_class_msl2", do_lower_case = True,
+tokenizer = AutoTokenizer.from_pretrained("finsit_class_qwen", do_lower_case = True,
                                          use_fast=True, max_length=512, truncation=True, padding=True,
                                          eos_token='###', pad_token='[PAD]',)
-                                          
 tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-# tokenizer.add_special_tokens({'eos_token': '###'})
 tokenizer.pad_token = tokenizer.eos_token
 
-model = AutoModelForSequenceClassification.from_pretrained("psych_eltern_class_msl2").to("cuda")
+# Load model
+model = AutoModelForSequenceClassification.from_pretrained("finsit_class_qwen").to("cuda")
 
-
+# Set device to CUDA if available
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-# print(device)
 
-
+# Initialize label column in DataFrame
 rbs_alk_eltern_sample['label'] = None
-
 rbs_alk_eltern_sample.reset_index(inplace=True)
 
+# Evaluate model and predict labels for each row in DataFrame
 model.eval()
 for i in range(len(rbs_alk_eltern_sample)): 
-         
         text=str(rbs_alk_eltern_sample.loc[i, "antwort"])
-        # print(text)
-        # inputs = tokenizer(text, return_tensors="pt")
         inputs = tokenizer(text, return_tensors="pt", max_length=512, truncation=True, padding="max_length")
         inputs=inputs.to(device)
-        # print(inputs)
         with torch.no_grad():
             logits = model(**inputs)
         predicted_class_id = torch.argmax(logits[0]).item()
-        # print(predicted_class_id)
         rbs_alk_eltern_sample.loc[i, "label"]=predicted_class_id
-        
-        
 
-pd.options.display.max_colwidth = 1000
-# print(rbs_alk_eltern_sample[["antwort", "label"]])
-
+# Save final DataFrame to pickle and Excel files
 rbs_alk_eltern_sample_codiert=rbs_alk_eltern_sample.copy()
-
-
-# Save DataFrame as pkl file
-# rbs_alk_eltern_sample_codiert.to_pickle('rbs/rbs0-4000_psych_codiert.pkl')
 rbs_alk_eltern_sample_codiert.to_pickle(target1)
-
-# Save DataFrame as Excel file
-# rbs_alk_eltern_sample_codiert.to_excel('rbs/rbs0-4000_psych_codiert.xlsx', index=False)
 rbs_alk_eltern_sample_codiert.to_excel(target2, index=False)
